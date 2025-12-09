@@ -1,0 +1,45 @@
+FROM alpine:latest
+
+# Runtime packages:
+#  - munin-node (munin agent)
+#  - ca-certificates (TLS roots for HTTPS)
+#  - curl (debugging / HTTP checks)
+#  - tcl (for NaviServer-related plugins)
+#  - perl (munin plugins are Perl-based)
+#  - procps-ng (ps, top, etc.)
+RUN apk add --no-cache \
+      munin-node \
+      ca-certificates \
+      curl \
+      tcl \
+      perl \
+      perl-net-cidr \
+      procps-ng \
+      gettext-envsubst \
+      && mv /etc/munin/munin-node.conf /etc/munin/munin-node.conf.alpine-dist || true
+
+RUN addgroup -S munin 2>/dev/null || true \
+ && adduser -S -D -H -s /sbin/nologin -G munin munin 2>/dev/null || true \
+ && mkdir -p /var/log/munin /var/run/munin \
+ && chown -R munin:munin /var/log/munin /var/run/munin
+
+# Install NaviServer plugins:
+# Use a temporary build-deps virtual package for git, then remove it.
+RUN apk add --no-cache --virtual .build-deps git \
+ && mkdir -p /usr/local/munin/lib/plugins /opt \
+ && git clone https://github.com/gustafn/munin-plugins-ns.git /opt/munin-plugins-ns \
+ && cp /opt/munin-plugins-ns/plugins/* /usr/local/munin/lib/plugins/ \
+ && chmod 755 /usr/local/munin/lib/plugins/* \
+ && rm -rf /opt/munin-plugins-ns \
+ && apk del .build-deps
+
+EXPOSE 4949
+
+COPY munin-node.conf.template /etc/munin/munin-node.conf.template
+RUN sed -i 's/\r$//' /etc/munin/munin-node.conf.template
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["munin-node", "--foreground"]
