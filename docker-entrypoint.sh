@@ -42,7 +42,7 @@ fi
 echo "You might check the used munin-node.conf via:"
 echo "    docker exec -it munin-node sed 's/^/   /'   /etc/munin/munin-node.conf"
 echo " "
-echo "To try the interation of the plugin with the server, try"
+echo "To try the interaction of the plugin with the server:"
 echo "    munin-run naviserver_openacs.org_views config"
 echo "    munin-run naviserver_openacs.org_views"
 echo " "
@@ -75,6 +75,47 @@ for p in $plugins; do
   fi
 done
 
+
+# ----------------------------------------------------------------------
+# Plugin configuration for PostgreSQL
+# ----------------------------------------------------------------------
+# Normalize DB_* and resolve DB_EFFECTIVE_HOST/DB_EFFECTIVE_DESC
+. /scripts/oacs-db-env.sh
+
+# Only configure postgres plugins if we have a DB name & user
+if [ -n "$DB_NAME" ] && [ -n "$DB_USER" ]; then
+  echo "munin-node: configuring postgres_* plugins for ${DB_USER}@${DB_EFFECTIVE_DESC}"
+
+  mkdir -p /etc/munin/plugins /etc/munin/plugin-conf.d
+
+  cat >/etc/munin/plugin-conf.d/postgres <<EOF
+[postgres_*]
+  env.PGHOST     ${DB_EFFECTIVE_HOST}
+  env.PGPORT     ${DB_PORT}
+  env.PGUSER     ${DB_USER}
+  env.PGDATABASE ${DB_NAME}
+EOF
+
+  DB_SAFE="$(printf '%s' "$DB_NAME" | tr '. -' '___')"
+
+  # Enable wildcard plugins with a suffix
+  ln -sf /usr/share/munin/plugins/postgres_tuples_      "/etc/munin/plugins/postgres_tuples_${DB_SAFE}"
+  ln -sf /usr/share/munin/plugins/postgres_scans_       "/etc/munin/plugins/postgres_scans_${DB_SAFE}"
+  ln -sf /usr/share/munin/plugins/postgres_connections_ "/etc/munin/plugins/postgres_connections_${DB_SAFE}"
+
+  # Non-wildcard plugin (no suffix needed)
+  ln -sf /usr/share/munin/plugins/postgres_bgwriter     /etc/munin/plugins/postgres_bgwriter
+
+
+  if [ -f /run/secrets/psql_password ]; then
+      PW="$(cat /run/secrets/psql_password)"
+    printf '  env.PGPASSWORD %s\n' "$PW" >> /etc/munin/plugin-conf.d/postgres
+  fi
+fi
+
+# ----------------------------------------------------------------------
+# General statup code
+# ----------------------------------------------------------------------
 echo "Starting munin-node for ${MUNIN_HOSTNAME}, allowing ${MUNIN_ALLOW_CIDR}"
 echo "Naviserver plugins targeting http://${NS_ADDRESS}:${NS_PORT}${NS_URL_PATH}"
 
