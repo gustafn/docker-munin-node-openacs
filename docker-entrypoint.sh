@@ -69,7 +69,8 @@ for p in $plugins; do
   src="/usr/local/munin/lib/plugins/naviserver_${p}"
   dst="/etc/munin/plugins/naviserver_${NS_SERVER_NAME}_${p}"
   if [ -x "$src" ]; then
-    ln -sf "$src" "$dst"
+      ln -sf "$src" "$dst"
+      echo "... creating link: ln -sf ${src} ${dst}"
   else
     echo "Warning: plugin $src not found or not executable"
   fi
@@ -82,7 +83,7 @@ done
 # Normalize DB_* and resolve DB_EFFECTIVE_HOST/DB_EFFECTIVE_DESC
 . /scripts/oacs-db-env.sh
 
-# Only configure postgres plugins if we have a DB name & user
+# Only configure postgres plugins if we have DB_NAME and DB_USER
 if [ -n "$DB_NAME" ] && [ -n "$DB_USER" ]; then
   echo "munin-node: configuring postgres_* plugins for ${DB_USER}@${DB_EFFECTIVE_DESC}"
 
@@ -101,11 +102,11 @@ EOF
   # Enable wildcard plugins with a suffix
   ln -sf /usr/share/munin/plugins/postgres_tuples_      "/etc/munin/plugins/postgres_tuples_${DB_SAFE}"
   ln -sf /usr/share/munin/plugins/postgres_scans_       "/etc/munin/plugins/postgres_scans_${DB_SAFE}"
-  ln -sf /usr/share/munin/plugins/postgres_connections_ "/etc/munin/plugins/postgres_connections_${DB_SAFE}"
+  # There is a bug, when using the "connections" plugin due to incompatible versions of the perl plugin
+  #ln -sf /usr/share/munin/plugins/postgres_connections_ "/etc/munin/plugins/postgres_connections_${DB_SAFE}"
 
   # Non-wildcard plugin (no suffix needed)
   ln -sf /usr/share/munin/plugins/postgres_bgwriter     /etc/munin/plugins/postgres_bgwriter
-
 
   if [ -f /run/secrets/psql_password ]; then
       PW="$(cat /run/secrets/psql_password)"
@@ -114,7 +115,7 @@ EOF
 fi
 
 # ----------------------------------------------------------------------
-# General statup code
+# General startup code
 # ----------------------------------------------------------------------
 echo "Starting munin-node for ${MUNIN_HOSTNAME}, allowing ${MUNIN_ALLOW_CIDR}"
 echo "Naviserver plugins targeting http://${NS_ADDRESS}:${NS_PORT}${NS_URL_PATH}"

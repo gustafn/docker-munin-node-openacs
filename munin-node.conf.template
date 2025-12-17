@@ -10,7 +10,7 @@ log_level 4
 log_file /var/log/munin/munin-node.log
 pid_file /var/run/munin/munin-node.pid
 
-# Don't daemonize inside the container
+# Don't demonize inside the container
 background 0
 setsid 1
 
