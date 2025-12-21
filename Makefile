@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+
 RELEASE_TAG   ?= latest
 BASE          ?= alpine
 DOCKER_USERNAME ?= gustafn

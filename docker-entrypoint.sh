@@ -3,8 +3,8 @@
 
 set -eu
 
-CONF=/etc/munin/munin-node.conf
-TEMPLATE=/etc/munin/munin-node.conf.template
+MUNIN_CONF=/etc/munin/munin-node.conf
+MUNIN_CONF_TEMPLATE=/etc/munin/munin-node.conf.template
 
 # Munin node name (as seen by master)
 MUNIN_HOSTNAME="${MUNIN_HOSTNAME:-$(hostname)}"
@@ -12,31 +12,32 @@ MUNIN_HOSTNAME="${MUNIN_HOSTNAME:-$(hostname)}"
 # Which master(s) may connect (CIDR notation)
 MUNIN_ALLOW_CIDR="${MUNIN_ALLOW_CIDR:-127.0.0.1/32}"
 
-# NaviServer/OpenACS instance details (for extra plugins)
+# NaviServer/OpenACS instance details (for NaviServer plugins)
 NS_SERVER_NAME="${NS_SERVER_NAME:-openacs.org}"      # used in plugin names
 NS_ADDRESS="${NS_ADDRESS:-openacs-org}"              # Docker service name of OpenACS container
 NS_PORT="${NS_PORT:-8080}"                           # HTTP port inside OpenACS container
 NS_URL_PATH="${NS_URL_PATH:-/SYSTEM/munin.tcl?t=}"   # path to interface script
+NS_PLUGIN_CONF_TEMPLATE="${NS_PLUGIN_CONF_TEMPLATE:-/etc/munin/naviserver-plugin.conf.template}"
 
 export MUNIN_HOSTNAME MUNIN_ALLOW_CIDR NS_SERVER_NAME NS_ADDRESS NS_PORT NS_URL_PATH
 
 # ----------------------------------------------------------------------
 # Generate munin-node.conf from template if none is provided by bind-mount
 # ----------------------------------------------------------------------
-if [ ! -f "$CONF" ]; then
-    if [ -f "$TEMPLATE" ]; then
-        echo "munin-node: generating $CONF from $TEMPLATE"
-        envsubst < "$TEMPLATE" > "$CONF"
-        echo "Generated $CONF"
+if [ ! -f "$MUNIN_CONF" ]; then
+    if [ -f "$MUNIN_CONF_TEMPLATE" ]; then
+        echo "munin-node: generating $MUNIN_CONF from $MUNIN_CONF_TEMPLATE"
+        envsubst < "$MUNIN_CONF_TEMPLATE" > "$MUNIN_CONF"
+        echo "Generated $MUNIN_CONF"
         echo "---"
-        sed 's/^/    /' "$CONF"
+        sed 's/^/    /' "$MUNIN_CONF"
         echo "---"
     else
-        echo "munin-node: $CONF not found and no template $TEMPLATE available, aborting"
+        echo "munin-node: $MUNIN_CONF not found and no template $MUNIN_CONF_TEMPLATE available, aborting"
         exit 1
     fi
 else
-    echo "munin-node: using existing $CONF (bind-mounted or image-provided)"
+    echo "munin-node: using existing $MUNIN_CONF (bind-mounted or image-provided)"
 fi
 
 echo "You might check the used munin-node.conf via:"
@@ -50,16 +51,60 @@ echo " "
 # ----------------------------------------------------------------------
 # Plugin configuration for NaviServer/OpenACS
 # ----------------------------------------------------------------------
+install_munin_tcl() {
+  # Where the Dockerfile put it:
+  local src="/usr/local/share/munin-plugins-ns/munin.tcl"
+
+  # Where OpenACS expects it (adjust if your mount uses a different base):
+  # Example: /oacs-system is a bind mount of ${oacs_root}
+  local dst_dir="${OACS_SYSTEM_DIR:-/oacs-system}"
+  local dst="${dst_dir}/munin.tcl"
+
+  # Sanity checks
+  if [ ! -r "$src" ]; then
+    echo "munin-node: install_munin_tcl: source missing: $src (skipping)"
+    return 0
+  fi
+  if [ ! -d "$dst_dir" ]; then
+    echo "munin-node: install_munin_tcl: target dir missing: $dst_dir (skipping)"
+    return 0
+  fi
+
+  # Determine ownership of the target directory (numeric uid/gid)
+  # stat -c works on busybox and GNU; if yours is different, tell me.
+  local uid gid
+  uid="$(stat -c '%u' "$dst_dir")" || return 0
+  gid="$(stat -c '%g' "$dst_dir")" || return 0
+
+  # If already installed and identical, do nothing
+  if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+    echo "munin-node: munin.tcl already up-to-date at $dst"
+    return 0
+  fi
+
+  echo "munin-node: installing munin.tcl to $dst_dir as uid=${uid} gid=${gid}"
+
+  # Do the copy+chmod as the directory owner (important for NFS root-squash)
+  su-exec "${uid}:${gid}" sh -c "
+    umask 022
+    cp -f '$src' '$dst'
+    chmod 0644 '$dst'
+  " || {
+  echo "munin-node: WARN: install failed (uid=${uid} gid=${gid})"
+  return 0
+}
+  # Optional: try to set group too (may fail on NFS, ignore)
+  chgrp "$gid" "$dst" 2>/dev/null || true
+}
+
+echo "munin-node: pre install munin.tcl: $(id)"
+
+install_munin_tcl
+
 mkdir -p /etc/munin/plugin-conf.d /etc/munin/plugins /usr/local/munin/lib/plugins
 
-cat >/etc/munin/plugin-conf.d/naviserver <<EOF
-[naviserver_*]
-  env.url ${NS_URL_PATH}
-
-[naviserver_${NS_SERVER_NAME}_*]
-  env.address ${NS_ADDRESS}
-  env.port ${NS_PORT}
-EOF
+echo "Generating /etc/munin/plugin-conf.d/naviserver from template"
+envsubst < "${NS_PLUGIN_CONF_TEMPLATE}" > /etc/munin/plugin-conf.d/naviserver
 
 # Symlink the naviserver_* plugins for this server instance
 plugins="locks.busy locks.nr locks.wait logstats lsof memsize \
